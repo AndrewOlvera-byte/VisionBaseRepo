@@ -1,0 +1,24 @@
+batch_size: 64
+epochs: 200
+amp: true
+
+# Data module
+dataset:
+  _target_: data.dataset.CIFAR10DataModule
+  root: ./data
+  batch_size: ${batch_size}
+  num_workers: 4
+
+# Model
+model:
+  _target_: models.custom_model.CustomNet
+
+# Optimizer
+optimizer:
+  name: adamw
+  lr: 1e-3
+
+# LR scheduler
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: ${epochs} 

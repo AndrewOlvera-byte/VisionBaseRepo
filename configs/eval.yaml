@@ -1,0 +1,6 @@
+defaults:
+  - train
+
+# Overwrite items specific to evaluation
+eval_checkpoint: "./checkpoints/last.ckpt"
+run_test_set: true 

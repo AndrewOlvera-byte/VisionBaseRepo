@@ -1,0 +1,11 @@
+defaults:
+  - train
+
+# Ray Tune params
+search:
+  num_samples: 20
+  metric: val_accuracy
+  mode: max
+  param_space:
+    optimizer.lr: [1e-5, 1e-4, 1e-3]
+    batch_size: [32, 64, 128] 

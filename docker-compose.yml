@@ -1,0 +1,19 @@
+version: "3.9"
+services:
+  train:
+    build: ./docker
+    volumes:
+      - .:/workspace
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+    command: train
+  eval:
+    build: ./docker
+    volumes:
+      - .:/workspace
+    command: eval
+  search:
+    build: ./docker
+    volumes:
+      - .:/workspace
+    command: search 
