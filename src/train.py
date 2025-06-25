@@ -1,34 +1,44 @@
 from pathlib import Path
-from typing import Any
 
 import hydra
 import torch
 from omegaconf import DictConfig
 
 from utils.logger import get_logger
-from utils.metrics import accuracy
 from utils.checkpoint import save_checkpoint
 
 logger = get_logger(__name__)
 
 def run_train(cfg: DictConfig):
-    """Single-GPU training loop.
-    Args:
-        cfg: Hydra DictConfig coming from configs/train.yaml
-    """
+    """Single-GPU training loop with optional optimizations."""
+    # === global optimisations ===
+    torch.backends.cudnn.benchmark = True  # enable cudnn autotuner
+
+    grad_acc_steps = int(cfg.get("gradient_accumulation_steps", 1))
+
     # 1. ==== data ====
     dm = hydra.utils.instantiate(cfg.dataset)
-    train_loader, val_loader = dm.train_dataloader(), dm.val_dataloader()
+    from utils.prefetch import PrefetchLoader  # local import avoids circular
+    train_loader = PrefetchLoader(dm.train_dataloader())
+    val_loader = PrefetchLoader(dm.val_dataloader())
+    num_train_samples = len(dm.train_dataloader().dataset)
+    steps_per_epoch = len(dm.train_dataloader())
 
     # 2. ==== model ====
     model = hydra.utils.instantiate(cfg.model).cuda()
-    try:
-        model = torch.compile(model)  # PyTorch ≥2.0
-    except Exception:
-        logger.warning("torch.compile failed – continuing without compilation")
+
+    if bool(cfg.get("compile", False)):
+        try:
+            model = torch.compile(model, mode="max-autotune")
+        except Exception as exc:  # pragma: no cover
+            logger.warning(f"torch.compile failed: {exc}")
 
     criterion = torch.nn.CrossEntropyLoss()
-    optimizer_cls = getattr(torch.optim, cfg.optimizer.name.capitalize()) if isinstance(cfg.optimizer.name, str) else torch.optim.AdamW
+    optimizer_cls = getattr(torch.optim, cfg.optimizer.name, None)
+    if optimizer_cls is None:
+        # fallback to capitalised CamelCase
+        camel = cfg.optimizer.name.title().replace("_", "")
+        optimizer_cls = getattr(torch.optim, camel, torch.optim.AdamW)
     optimizer = optimizer_cls(model.parameters(), lr=cfg.optimizer.lr)
 
     scheduler = None
@@ -45,24 +55,28 @@ def run_train(cfg: DictConfig):
     for epoch in range(1, cfg.epochs + 1):
         model.train()
         epoch_loss = 0.0
-        for xb, yb in train_loader:
-            xb, yb = xb.cuda(non_blocking=True), yb.cuda(non_blocking=True)
-            optimizer.zero_grad(set_to_none=True)
+        optimizer.zero_grad(set_to_none=True)
+        for step, (xb, yb) in enumerate(train_loader, start=1):
+            # PrefetchLoader already moved tensors to GPU (non_blocking).
             with torch.cuda.amp.autocast(enabled=cfg.amp):
                 preds = model(xb)
-                loss = criterion(preds, yb)
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+                loss = criterion(preds, yb) / grad_acc_steps
 
-            epoch_loss += loss.item() * xb.size(0)
+            scaler.scale(loss).backward()
+
+            if step % grad_acc_steps == 0 or step == steps_per_epoch:
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
+
+            epoch_loss += loss.item() * xb.size(0) * grad_acc_steps
 
         if scheduler is not None:
             scheduler.step()
 
         # === validation ===
         val_acc = _evaluate(model, val_loader, cfg.amp)
-        logger.info(f"Epoch {epoch:03d} | loss={epoch_loss/len(train_loader.dataset):.4f} | val_acc={val_acc*100:.2f}%")
+        logger.info(f"Epoch {epoch:03d} | loss={epoch_loss/num_train_samples:.4f} | val_acc={val_acc*100:.2f}%")
 
         # === checkpoint ===
         if val_acc > best_acc:
@@ -75,7 +89,7 @@ def run_train(cfg: DictConfig):
         # === Ray Tune metric ===
         try:
             from ray import tune  # noqa: WPS433  (runtime import)
-            tune.report(val_accuracy=val_acc, epoch=epoch, loss=epoch_loss/len(train_loader.dataset))
+            tune.report(val_accuracy=val_acc, epoch=epoch, loss=epoch_loss/num_train_samples)
         except ImportError:
             pass
 

@@ -8,10 +8,12 @@ from torchvision import datasets, transforms
 class CIFAR10DataModule:
     """Minimal dataset wrapper that offers train/val(/test) dataloaders."""
 
-    def __init__(self, root: str = "./data", batch_size: int = 64, num_workers: int = 4):
+    def __init__(self, root: str = "./data", batch_size: int = 64, num_workers: int = 4, persistent_workers: bool = True, prefetch_factor: int = 2):
         self.root = root
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.persistent_workers = persistent_workers
+        self.prefetch_factor = prefetch_factor
 
         _mean = (0.4914, 0.4822, 0.4465)
         _std = (0.2023, 0.1994, 0.2010)
@@ -22,6 +24,7 @@ class CIFAR10DataModule:
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 transforms.Normalize(_mean, _std),
+                transforms.RandomErasing(p=0.1),
             ]
         )
         self.transform_eval = transforms.Compose(
@@ -58,6 +61,8 @@ class CIFAR10DataModule:
             shuffle=True,
             num_workers=self.num_workers,
             pin_memory=True,
+            persistent_workers=self.persistent_workers if self.num_workers > 0 else False,
+            prefetch_factor=self.prefetch_factor if self.num_workers > 0 else None,
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -68,6 +73,8 @@ class CIFAR10DataModule:
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
+            persistent_workers=self.persistent_workers if self.num_workers > 0 else False,
+            prefetch_factor=self.prefetch_factor if self.num_workers > 0 else None,
         )
 
     def test_dataloader(self) -> DataLoader:
@@ -78,4 +85,6 @@ class CIFAR10DataModule:
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
+            persistent_workers=self.persistent_workers if self.num_workers > 0 else False,
+            prefetch_factor=self.prefetch_factor if self.num_workers > 0 else None,
         ) 

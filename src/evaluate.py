@@ -4,7 +4,7 @@ import torch
 from omegaconf import DictConfig
 
 from utils.logger import get_logger
-from utils.metrics import accuracy
+from utils.prefetch import PrefetchLoader
 
 logger = get_logger(__name__)
 
@@ -17,7 +17,7 @@ def run_eval(cfg: DictConfig):
 
     # Data
     dm = hydra.utils.instantiate(cfg.dataset)
-    val_loader = dm.val_dataloader()
+    val_loader = PrefetchLoader(dm.val_dataloader())
 
     # Model
     model = hydra.utils.instantiate(cfg.model).cuda()
@@ -32,6 +32,7 @@ def run_eval(cfg: DictConfig):
     if cfg.get("run_test_set", False):
         test_loader = dm.test_dataloader() if hasattr(dm, "test_dataloader") else None
         if test_loader is not None:
+            test_loader = PrefetchLoader(test_loader)
             acc_test = _evaluate(model, test_loader, cfg.amp)
             logger.info(f"Test accuracy: {acc_test*100:.2f}%")
         else:

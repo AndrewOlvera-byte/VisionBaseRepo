@@ -21,4 +21,13 @@ optimizer:
 # LR scheduler
 scheduler:
   _target_: torch.optim.lr_scheduler.CosineAnnealingLR
-  T_max: ${epochs} 
+  T_max: ${epochs}
+
+# Performance options
+compile: true
+gradient_accumulation_steps: 1
+
+# Performance options
+prefetch_factor: 2
+persistent_workers: true
+num_workers: 4  # override easily on CLI 
